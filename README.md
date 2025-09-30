@@ -1,6 +1,6 @@
 # Dynamic Prices Card
 
-[![Version](https://img.shields.io/badge/version-2025.9.1-blue.svg)](https://github.com/ViperRNMC/dynamic-prices-card/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/ViperRNMC/dynamic-prices-card)](https://github.com/ViperRNMC/dynamic-prices-card/releases)
 [![GitHub Issues](https://img.shields.io/github/issues/ViperRNMC/dynamic-prices-card)](https://github.com/ViperRNMC/dynamic-prices-card/issues)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
