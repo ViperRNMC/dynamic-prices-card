@@ -63,12 +63,14 @@ class DynamicPricesCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // Ensure config object exists to avoid runtime errors when hass is set before setConfig
+    this._config = this._config || {};
     this._lang = hass?.locale?.language || hass?.language || 'en';
     this.updateCard();
   }
 
   updateCard() {
-    if (!this._hass || !this._config.entity) return;
+    if (!this._hass || !this._config || !this._config.entity) return;
     
     const entity = this._hass.states[this._config.entity];
     if (!entity) {
