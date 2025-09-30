@@ -623,6 +623,8 @@ class DynamicPricesCardEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // Ensure config exists: Home Assistant may set hass on the editor before setConfig
+    this._config = this._config || {};
     if (!this._initialized) {
       this._render();
       this._initialized = true;

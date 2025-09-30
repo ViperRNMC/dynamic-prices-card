@@ -556,6 +556,8 @@ class DynamicPricesCardEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // Ensure config exists: HA may call hass before setConfig on the editor
+    this._config = this._config || {};
     if (!this._initialized) {
       this._render();
       this._initialized = true;
