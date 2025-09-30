@@ -3,17 +3,29 @@
 [![HACS Default](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/hacs/integration)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/ViperRNMC/dynamic-prices-card)](https://github.com/ViperRNMC/dynamic-prices-card/releases)
 
-Een aangepaste Lovelace kaart voor Home Assistant die dynamische energieprijzen toont voor de komende 24 uur.
+Een geavanceerde Lovelace kaart voor Home Assistant die dynamische energieprijzen visualiseert in zowel timeline als cirkel weergave. Geïnspireerd door price-timeline-card met uitgebreide functionaliteit.
 
-## Features
+## ✨ Features
 
-- 📊 Grafiek van energieprijzen voor de komende 24 uur
-- 🎨 Aanpasbare kleuren en stijlen
-- ⚡ Realtime updates
-- 📱 Responsive design
-- 🌟 Ondersteuning voor verschillende energieleveranciers
-- 💰 Prijs highlights (hoogste/laagste)
-- ⏰ Huidige tijd indicator
+### 📊 Dubbele weergavemodi
+- **Timeline modus**: Horizontale balkengrafiek met uurlijkse prijzen
+- **Cirkel modus**: Elegante cirkelweergave met huidige prijs focus
+
+### 🎨 Intelligente kleurcodering  
+- Automatische kleuring boven/onder daggemiddelde
+- Turquoise voor lage prijzen, oranje voor hoge prijzen
+- Aanpasbare kleurenschema's
+
+### 📱 Geavanceerde interactie
+- **Tijdslider**: Navigeer door uren (cirkel modus)
+- **Responsief ontwerp**: Werkt perfect op alle schermgroottes
+- **Huidige tijd indicator**: Duidelijke markering van nu
+
+### ⚡ Uitgebreide ondersteuning
+- **Meerdere data formaten**: Nordpool, Tibber, ENTSO-E, Frank Energie, price-timeline-card
+- **Flexibele eenheden**: €/kWh of centen weergave
+- **Lokalisatie**: Nederlands en Engels
+- **Theme ondersteuning**: Light, dark en automatisch
 
 ## Installatie
 
@@ -42,57 +54,117 @@ resources:
 
 ## Configuratie
 
-### Basis configuratie
+### Timeline weergave (standaard)
 
 ```yaml
 type: custom:dynamic-prices-card
-entity: sensor.energy_prices
-title: Energieprijzen komende 24u
+entity: sensor.nordpool_kwh_nl_eur_3_095_0
+title: Energieprijzen vandaag
+```
+
+### Cirkel weergave met slider
+
+```yaml
+type: custom:dynamic-prices-card
+entity: sensor.nordpool_kwh_nl_eur_3_095_0
+title: Energieprijzen 
+timeline: false
+slider: true
+```
+
+### Frank Energie configuratie
+
+```yaml
+# Basis configuratie voor Frank Energie
+type: custom:dynamic-prices-card
+entity: sensor.current_electricity_price_all_in
+title: Frank Energie Prijzen
+timeline: true
+hours: 24
+color_coding: true
+unit_in_cents: false
+```
+
+```yaml
+# Frank Energie met cirkel weergave
+type: custom:dynamic-prices-card
+entity: sensor.current_electricity_price_all_in
+title: Frank Energie
+timeline: false
+slider: true
+color_coding: true
+```
+
+```yaml
+# Frank Energie met meerdere sensoren
+type: custom:dynamic-prices-card
+entity: sensor.current_electricity_price_all_in
+title: Elektriciteit (All-in)
+average_entity: sensor.average_electricity_price_today_all_in
+timeline: true
+hours: 48
 ```
 
 ### Geavanceerde configuratie
 
 ```yaml
 type: custom:dynamic-prices-card
-entity: sensor.energy_prices
+entity: sensor.nordpool_kwh_nl_eur_3_095_0
 title: Energieprijzen komende 24u
+timeline: true
 hours: 24
-refresh_interval: 30
-show_current_price: true
-show_average: true
-price_unit: "€/kWh"
-chart_type: "line"
-color_scheme: "dynamic"
-height: 200
-animations: true
-show_grid: true
-show_legend: true
-theme: "auto"
+color_coding: true
+unit_in_cents: false
+theme: auto
+average_entity: sensor.nordpool_average_price  # optioneel
 ```
 
-## Configuratie opties
+## 🔧 Configuratie opties
 
-| Naam | Type | Default | Beschrijving |
-|------|------|---------|--------------|
-| `entity` | string | **Verplicht** | De sensor entity voor energieprijzen |
+| Parameter | Type | Default | Beschrijving |
+|-----------|------|---------|--------------|
+| `entity` | string | **Verplicht** | Sensor entity voor energieprijzen |
 | `title` | string | "Dynamic Prices" | Titel van de kaart |
+| `timeline` | boolean | `true` | Timeline (`true`) of cirkel (`false`) weergave |
+| `slider` | boolean | `false` | Tijdslider voor navigatie (alleen cirkel modus) |
 | `hours` | number | 24 | Aantal uren om te tonen |
-| `refresh_interval` | number | 30 | Refresh interval in seconden |
-| `show_current_price` | boolean | true | Toon huidige prijs |
-| `show_average` | boolean | true | Toon gemiddelde prijs |
-| `price_unit` | string | "€/kWh" | Eenheid voor prijsweergave |
-| `chart_type` | string | "line" | Type grafiek (line, bar, area) |
-| `color_scheme` | string | "dynamic" | Kleurenschema (dynamic, green, blue, red) |
-| `height` | number | 200 | Hoogte van de grafiek in pixels |
-| `animations` | boolean | true | Schakel animaties in/uit |
-| `show_grid` | boolean | true | Toon rasterlijnen |
-| `show_legend` | boolean | true | Toon legenda |
-| `theme` | string | "auto" | Thema (auto, light, dark) |
+| `color_coding` | boolean | `true` | Kleurcodering boven/onder gemiddelde |
+| `unit_in_cents` | boolean | `false` | Toon prijzen in centen in plaats van €/kWh |
+| `theme` | string | `"auto"` | Thema: `light`, `dark`, of `auto` |
+| `average_entity` | string | - | Optionele aparte entity voor daggemiddelde |
+
+## 🔌 Frank Energie Integratie
+
+Deze kaart heeft speciale ondersteuning voor de [Frank Energie Home Assistant integratie](https://github.com/HiDiHo01/home-assistant-frank_energie).
+
+### Ondersteunde Frank Energie sensoren:
+- **Elektriciteit**: `sensor.current_electricity_price_all_in`
+- **Gas**: `sensor.current_gas_price_all_in` 
+- **Gemiddelden**: `sensor.average_electricity_price_*`
+- **Min/Max**: `sensor.*_min`, `sensor.*_max`
+- **Upcoming**: `sensor.*_upcoming_*`
+
+### Frank Energie data formaat:
+```json
+{
+  "state": "0.234",
+  "attributes": {
+    "prices": [
+      {
+        "from": "2024-01-01T00:00:00+01:00",
+        "till": "2024-01-01T01:00:00+01:00",
+        "price": 0.234
+      }
+    ]
+  }
+}
+```
 
 ## Sensor vereisten
 
-De kaart verwacht een sensor die prijsdata levert in het volgende formaat:
+De kaart verwacht een sensor die prijsdata levert in een van de ondersteunde formaten:
 
+### Algemeen formaat:
 ```json
 {
   "state": "0.23",
@@ -115,11 +187,17 @@ De kaart verwacht een sensor die prijsdata levert in het volgende formaat:
 ## Compatibele sensoren
 
 Deze kaart werkt goed met:
-- Nordpool sensor
-- ENTSO-E sensor
-- Tibber sensor
-- Energyzero sensor
-- Andere energieprijs sensoren die het bovenstaande formaat gebruiken
+- **Nordpool sensor**: Gebruikt `raw_today` en `raw_tomorrow` attributen
+- **ENTSO-E sensor**: Gebruikt `data` attribuut met prijslijst
+- **Tibber sensor**: Gebruikt `current_price` en prijslijsten
+- **Frank Energie sensor**: Gebruikt `prices` attribuut met `from`, `till`, `price` formaat
+  - `sensor.current_electricity_price_all_in` - Huidige elektriciteitsprijs (All-in)
+  - `sensor.current_gas_price_all_in` - Huidige gasprijs (All-in)
+  - `sensor.average_electricity_price_today_all_in` - Gemiddelde elektriciteitsprijs vandaag
+  - Automatische detectie van Frank Energie formaat
+- **Price-timeline-card sensoren**: Gebruikt `prices` attribuut met `time`, `price` formaat
+- **Energyzero sensor**: Vergelijkbare formaten als bovenstaande
+- **Andere energieprijs sensoren**: Die bovenstaande formaten gebruiken
 
 ## Ontwikkeling
 

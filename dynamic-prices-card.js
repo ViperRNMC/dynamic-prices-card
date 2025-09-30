@@ -1,30 +1,60 @@
+// Lokalisatie
+const languages = {
+  en: {
+    no_data: "No data available",
+    missing_entity: "Please specify entity in the config",
+    label_current_price: "Current price",
+    label_average_price: "Average price",
+    label_today_price: "Today's price",
+    label_tomorrow_price: "Tomorrow's price",
+    unit_cent: "Cent",
+    min_price: "Min",
+    max_price: "Max",
+    now: "Now",
+    avg: "Avg"
+  },
+  nl: {
+    no_data: "Geen gegevens beschikbaar",
+    missing_entity: "Specificeer de entity in de configuratie",
+    label_current_price: "Huidige prijs",
+    label_average_price: "Gemiddelde prijs",
+    label_today_price: "Prijs van vandaag",
+    label_tomorrow_price: "Prijs van morgen",
+    unit_cent: "Cent",
+    min_price: "Min",
+    max_price: "Max",
+    now: "Nu",
+    avg: "Gem"
+  }
+};
+
+function localize(key, lang = 'en') {
+  return languages[lang]?.[key] || languages['en'][key] || key;
+}
+
 class DynamicPricesCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._hass = null;
+    this.selectedHour = null;
   }
 
   setConfig(config) {
     if (!config.entity) {
-      throw new Error('Entity is required');
+      throw new Error(localize('missing_entity'));
     }
     
     this._config = {
       entity: config.entity,
       title: config.title || 'Dynamic Prices',
       hours: config.hours || 24,
-      refresh_interval: config.refresh_interval || 30,
-      show_current_price: config.show_current_price !== false,
-      show_average: config.show_average !== false,
-      price_unit: config.price_unit || '€/kWh',
-      chart_type: config.chart_type || 'line',
-      color_scheme: config.color_scheme || 'dynamic',
-      height: config.height || 200,
-      animations: config.animations !== false,
-      show_grid: config.show_grid !== false,
-      show_legend: config.show_legend !== false,
+      timeline: config.timeline !== false,
+      slider: config.slider === true,
+      color_coding: config.color_coding !== false,
+      average_entity: config.average_entity,
+      unit_in_cents: config.unit_in_cents === true,
       theme: config.theme || 'auto'
     };
     
@@ -33,6 +63,7 @@ class DynamicPricesCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    this._lang = hass?.locale?.language || hass?.language || 'en';
     this.updateCard();
   }
 
@@ -61,48 +92,189 @@ class DynamicPricesCard extends HTMLElement {
   }
 
   render() {
-    this.shadowRoot.innerHTML = `
-      <ha-card>
-        <div class="card-header">
-          <div class="title">${this._config.title}</div>
-          <div class="info-row" id="info-row"></div>
-        </div>
-        <div class="card-content">
-          <div class="chart-container">
-            <canvas id="price-chart" width="400" height="${this._config.height}"></canvas>
+    if (this._config.timeline === false) {
+      this.shadowRoot.innerHTML = `
+        <ha-card>
+          <div class="circle-container">
+            <div class="circle-chart" id="circle-chart"></div>
+            <div class="circle-text" id="circle-text"></div>
           </div>
-          <div class="price-info" id="price-info"></div>
-        </div>
-      </ha-card>
-      ${this.getStyles()}
-    `;
+          ${this._config.slider ? '<div class="slider-container" id="slider-container"></div>' : ''}
+        </ha-card>
+        ${this.getStyles()}
+      `;
+    } else {
+      this.shadowRoot.innerHTML = `
+        <ha-card>
+          <div class="card-header">
+            <div class="header-left">
+              <div class="time" id="time-label"></div>
+              <div class="price" id="current-price">
+                <span class="value"></span>
+                <span class="unit"></span>
+              </div>
+            </div>
+            <div class="label">${this._config.title}</div>
+          </div>
+          <div class="timeline-container">
+            <div class="timeline" id="timeline"></div>
+            <div class="scale" id="scale"></div>
+          </div>
+        </ha-card>
+        ${this.getStyles()}
+      `;
+    }
   }
 
   renderChart(entity) {
-    const canvas = this.shadowRoot.getElementById('price-chart');
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
     const prices = this.extractPrices(entity);
     
     if (!prices || prices.length === 0) {
-      this.showError('No price data available');
+      this.showError(localize('no_data', this._lang));
       return;
     }
 
-    this.drawChart(ctx, canvas, prices);
-    this.updateInfoRow(entity, prices);
+    if (this._config.timeline === false) {
+      this.renderCircleView(prices);
+    } else {
+      this.renderTimelineView(prices);
+    }
+  }
+
+  renderTimelineView(prices) {
+    const timeline = this.shadowRoot.getElementById('timeline');
+    const scale = this.shadowRoot.getElementById('scale');
+    const timeLabel = this.shadowRoot.getElementById('time-label');
+    const currentPrice = this.shadowRoot.getElementById('current-price');
+    
+    if (!timeline || !scale) return;
+
+    const now = new Date();
+    const currentHour = now.getHours();
+    const avgPrice = this.calculateAverage(prices);
+    
+    timeline.innerHTML = prices.map((price, i) => {
+      const isAboveAvg = parseFloat(price.price) > avgPrice;
+      const color = this._config.color_coding ? 
+        (isAboveAvg ? 'var(--orange-color)' : 'var(--turquoise-color)') : 
+        'var(--primary-color)';
+      
+      const faded = i < currentHour ? 'faded' : '';
+      const marker = i === currentHour ? 'marker' : '';
+      
+      return `<div class="slot ${faded} ${marker}" style="background: ${color};"></div>`;
+    }).join('');
+    
+    scale.innerHTML = Array.from({ length: 25 }).map((_, i) => {
+      const showHour = i % 6 === 0 || i === 24;
+      return `
+        <div class="tick">
+          <div class="dot ${showHour ? '' : 'faded'}"></div>
+          ${showHour ? `<div class="hour">${String(i % 24).padStart(2, '0')}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+    
+    const currentPriceData = prices[currentHour];
+    if (currentPriceData && currentPrice) {
+      const price = parseFloat(currentPriceData.price);
+      const formattedPrice = this._config.unit_in_cents ? (price * 100).toFixed(0) : price.toFixed(3);
+      const unit = this._config.unit_in_cents ? localize('unit_cent', this._lang) : '€/kWh';
+      
+      currentPrice.querySelector('.value').textContent = formattedPrice;
+      currentPrice.querySelector('.unit').textContent = unit;
+    }
+    
+    if (timeLabel) {
+      const timeString = `${String(currentHour).padStart(2, '0')}:00-${String((currentHour + 1) % 24).padStart(2, '0')}:00`;
+      timeLabel.textContent = timeString;
+    }
+  }
+
+  renderCircleView(prices) {
+    const circleChart = this.shadowRoot.getElementById('circle-chart');
+    const circleText = this.shadowRoot.getElementById('circle-text');
+    const sliderContainer = this.shadowRoot.getElementById('slider-container');
+    
+    if (!circleChart || !circleText) return;
+
+    const now = new Date();
+    const currentHour = now.getHours();
+    const hourToShow = this._config.slider ? (this.selectedHour ?? currentHour) : currentHour;
+    
+    const avgPrice = this.calculateAverage(prices);
+    const currentPriceData = prices[hourToShow];
+    
+    if (!currentPriceData) return;
+    
+    const currentPrice = parseFloat(currentPriceData.price);
+    const minPrice = Math.min(...prices.map(p => parseFloat(p.price)));
+    const maxPrice = Math.max(...prices.map(p => parseFloat(p.price)));
+    
+    const rawRatio = (currentPrice - minPrice) / (maxPrice - minPrice || 1);
+    const ratio = 0.05 + rawRatio * 0.9;
+    
+    const radius = 65;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference * (1 - ratio);
+    
+    const circleColor = this._config.color_coding ?
+      (currentPrice > avgPrice ? 'var(--orange-color)' : 'var(--turquoise-color)') :
+      'var(--primary-color)';
+    
+    circleChart.innerHTML = `
+      <svg width="150" height="150">
+        <circle cx="75" cy="75" r="${radius}" stroke="var(--divider-color)" stroke-width="10" fill="none" opacity="0.2"></circle>
+        <circle cx="75" cy="75" r="${radius}" stroke="${circleColor}" stroke-width="10" fill="none" 
+                stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" 
+                stroke-linecap="round" transform="rotate(-90 75 75)"></circle>
+      </svg>
+    `;
+    
+    const formattedPrice = this._config.unit_in_cents ? (currentPrice * 100).toFixed(0) : currentPrice.toFixed(3);
+    const unit = this._config.unit_in_cents ? localize('unit_cent', this._lang) : '€/kWh';
+    const timeLabel = `${String(hourToShow).padStart(2, '0')}:00-${String((hourToShow + 1) % 24).padStart(2, '0')}:00`;
+    
+    circleText.innerHTML = `
+      <div class="price">
+        <span class="value">${formattedPrice}</span>
+        <span class="unit">${unit}</span>
+      </div>
+      <div class="time">${timeLabel}</div>
+    `;
+    
+    if (this._config.slider && sliderContainer) {
+      sliderContainer.innerHTML = `
+        <input type="range" min="0" max="23" value="${hourToShow}" 
+               class="time-slider" id="time-slider">
+      `;
+      
+      const slider = this.shadowRoot.getElementById('time-slider');
+      slider?.addEventListener('input', (e) => {
+        this.selectedHour = parseInt(e.target.value, 10);
+        this.renderCircleView(prices);
+      });
+    }
   }
 
   extractPrices(entity) {
-    if (!entity.attributes || !entity.attributes.prices) {
+    let prices = [];
+    
+    if (entity.attributes?.prices) {
+      prices = entity.attributes.prices;
+    } else if (entity.attributes?.data) {
+      prices = entity.attributes.data.map(item => ({
+        datetime: item.start_time,
+        price: item.price_per_kwh
+      }));
+    } else {
       return [];
     }
 
     const now = new Date();
     const endTime = new Date(now.getTime() + (this._config.hours * 60 * 60 * 1000));
     
-    return entity.attributes.prices
+    return prices
       .filter(price => {
         const priceTime = new Date(price.datetime);
         return priceTime >= now && priceTime <= endTime;
@@ -110,199 +282,33 @@ class DynamicPricesCard extends HTMLElement {
       .sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
   }
 
-  drawChart(ctx, canvas, prices) {
-    const width = canvas.width;
-    const height = canvas.height;
-    const padding = 40;
-    const chartWidth = width - (padding * 2);
-    const chartHeight = height - (padding * 2);
-
-    ctx.clearRect(0, 0, width, height);
-
-    if (prices.length === 0) return;
-
-    const priceValues = prices.map(p => parseFloat(p.price));
-    const minPrice = Math.min(...priceValues);
-    const maxPrice = Math.max(...priceValues);
-    const priceRange = maxPrice - minPrice || 1;
-
-    const colors = this.getColors();
-    
-    if (this._config.show_grid) {
-      this.drawGrid(ctx, padding, chartWidth, chartHeight, colors.grid);
-    }
-
-    ctx.strokeStyle = colors.line;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-
-    prices.forEach((price, index) => {
-      const x = padding + (index / (prices.length - 1)) * chartWidth;
-      const y = padding + ((maxPrice - parseFloat(price.price)) / priceRange) * chartHeight;
-      
-      if (index === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
+  calculateAverage(prices) {
+    if (this._config.average_entity && this._hass) {
+      const avgEntity = this._hass.states[this._config.average_entity];
+      if (avgEntity) {
+        return parseFloat(avgEntity.state);
       }
-    });
-
-    ctx.stroke();
-
-    if (this._config.chart_type === 'area') {
-      ctx.fillStyle = colors.area;
-      ctx.lineTo(padding + chartWidth, padding + chartHeight);
-      ctx.lineTo(padding, padding + chartHeight);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    this.drawCurrentTimeIndicator(ctx, padding, chartWidth, chartHeight, prices, colors.current);
-
-    prices.forEach((price, index) => {
-      const x = padding + (index / (prices.length - 1)) * chartWidth;
-      const y = padding + ((maxPrice - parseFloat(price.price)) / priceRange) * chartHeight;
-      
-      ctx.fillStyle = colors.point;
-      ctx.beginPath();
-      ctx.arc(x, y, 3, 0, 2 * Math.PI);
-      ctx.fill();
-    });
-
-    this.drawAxesLabels(ctx, padding, chartWidth, chartHeight, prices, minPrice, maxPrice, colors.text);
-  }
-
-  drawGrid(ctx, padding, chartWidth, chartHeight, color) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 0.5;
-    
-    for (let i = 0; i <= 6; i++) {
-      const x = padding + (i / 6) * chartWidth;
-      ctx.beginPath();
-      ctx.moveTo(x, padding);
-      ctx.lineTo(x, padding + chartHeight);
-      ctx.stroke();
     }
     
-    for (let i = 0; i <= 5; i++) {
-      const y = padding + (i / 5) * chartHeight;
-      ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(padding + chartWidth, y);
-      ctx.stroke();
-    }
-  }
-
-  drawCurrentTimeIndicator(ctx, padding, chartWidth, chartHeight, prices, color) {
-    if (prices.length === 0) return;
-    
-    const now = new Date();
-    const firstTime = new Date(prices[0].datetime);
-    const lastTime = new Date(prices[prices.length - 1].datetime);
-    
-    if (now >= firstTime && now <= lastTime) {
-      const totalHours = (lastTime - firstTime) / (1000 * 60 * 60);
-      const currentHours = (now - firstTime) / (1000 * 60 * 60);
-      const x = padding + (currentHours / totalHours) * chartWidth;
-      
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
-      ctx.beginPath();
-      ctx.moveTo(x, padding);
-      ctx.lineTo(x, padding + chartHeight);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-  }
-
-  drawAxesLabels(ctx, padding, chartWidth, chartHeight, prices, minPrice, maxPrice, color) {
-    ctx.fillStyle = color;
-    ctx.font = '10px sans-serif';
-    ctx.textAlign = 'center';
-    
-    const timeStep = Math.max(1, Math.floor(prices.length / 6));
-    for (let i = 0; i < prices.length; i += timeStep) {
-      const x = padding + (i / (prices.length - 1)) * chartWidth;
-      const time = new Date(prices[i].datetime);
-      const label = time.getHours().toString().padStart(2, '0') + ':00';
-      ctx.fillText(label, x, padding + chartHeight + 15);
-    }
-    
-    ctx.textAlign = 'right';
-    for (let i = 0; i <= 5; i++) {
-      const price = maxPrice - (i / 5) * (maxPrice - minPrice);
-      const y = padding + (i / 5) * chartHeight;
-      ctx.fillText(price.toFixed(3), padding - 5, y + 3);
-    }
-  }
-
-  updateInfoRow(entity, prices) {
-    const infoRow = this.shadowRoot.getElementById('info-row');
-    const priceInfo = this.shadowRoot.getElementById('price-info');
-    
-    if (!infoRow || !priceInfo) return;
-    
-    const currentPrice = parseFloat(entity.state);
     const priceValues = prices.map(p => parseFloat(p.price));
-    const avgPrice = priceValues.reduce((sum, price) => sum + price, 0) / priceValues.length;
-    const minPrice = Math.min(...priceValues);
-    const maxPrice = Math.max(...priceValues);
-    
-    let infoContent = '';
-    if (this._config.show_current_price) {
-      infoContent += `<div class="current-price">Nu: ${currentPrice.toFixed(3)} ${this._config.price_unit}</div>`;
-    }
-    if (this._config.show_average) {
-      infoContent += `<div class="avg-price">Gem: ${avgPrice.toFixed(3)} ${this._config.price_unit}</div>`;
-    }
-    
-    infoRow.innerHTML = infoContent;
-    
-    priceInfo.innerHTML = `
-      <div class="price-stats">
-        <div class="stat-item">
-          <span class="stat-label">Min</span>
-          <span class="stat-value min-price">${minPrice.toFixed(3)} ${this._config.price_unit}</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Max</span>
-          <span class="stat-value max-price">${maxPrice.toFixed(3)} ${this._config.price_unit}</span>
-        </div>
-      </div>
-    `;
+    return priceValues.reduce((sum, price) => sum + price, 0) / priceValues.length;
   }
 
-  getColors() {
-    const isDark = this.isDarkTheme();
-    
-    const colorSchemes = {
-      dynamic: {
-        line: isDark ? '#4fc3f7' : '#0288d1',
-        area: isDark ? 'rgba(79, 195, 247, 0.1)' : 'rgba(2, 136, 209, 0.1)',
-        point: isDark ? '#4fc3f7' : '#0288d1',
-        grid: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-        text: isDark ? '#ffffff' : '#333333',
-        current: '#ff5722'
-      },
-      green: {
-        line: '#4caf50',
-        area: 'rgba(76, 175, 80, 0.1)',
-        point: '#4caf50',
-        grid: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-        text: isDark ? '#ffffff' : '#333333',
-        current: '#ff5722'
-      }
+  static getConfigElement() {
+    return document.createElement('dynamic-prices-card-editor');
+  }
+
+  static getStubConfig() {
+    return {
+      entity: '',
+      title: 'Dynamic Prices',
+      timeline: true,
+      theme: 'auto'
     };
-    
-    return colorSchemes[this._config.color_scheme] || colorSchemes.dynamic;
   }
 
-  isDarkTheme() {
-    if (this._config.theme === 'dark') return true;
-    if (this._config.theme === 'light') return false;
-    
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  getCardSize() {
+    return this._config.timeline === false ? 2 : 3;
   }
 
   getStyles() {
@@ -310,6 +316,8 @@ class DynamicPricesCard extends HTMLElement {
       <style>
         :host {
           display: block;
+          --orange-color: #ff832d;
+          --turquoise-color: #1dbfac;
         }
         
         ha-card {
@@ -318,80 +326,189 @@ class DynamicPricesCard extends HTMLElement {
           box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.1));
           padding: 16px;
           margin: 4px;
+          font-family: var(--paper-font-common-base_-_font-family, sans-serif);
+          color: var(--primary-text-color, #333);
+          text-align: center;
         }
         
         .card-header {
           display: flex;
           justify-content: space-between;
-          align-items: center;
+          align-items: flex-start;
           margin-bottom: 16px;
         }
         
-        .title {
-          font-size: 18px;
-          font-weight: 500;
+        .header-left {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 4px;
+        }
+        
+        .time {
+          font-size: 14px;
+          color: var(--secondary-text-color, #666);
+          line-height: 1.1;
+        }
+        
+        .price {
+          font-size: 24px;
+          font-weight: bold;
+          color: var(--primary-text-color, #333);
+          line-height: 1.1;
+          display: flex;
+          align-items: baseline;
+        }
+        
+        .price .value {
+          font-size: 28px;
+          font-weight: 800;
+        }
+        
+        .price .unit {
+          font-size: 14px;
+          font-weight: normal;
+          margin-left: 6px;
           color: var(--primary-text-color, #333);
         }
         
-        .info-row {
-          display: flex;
-          gap: 16px;
+        .label {
           font-size: 14px;
-        }
-        
-        .current-price {
-          color: var(--primary-color, #03a9f4);
-          font-weight: 600;
-        }
-        
-        .avg-price {
           color: var(--secondary-text-color, #666);
         }
         
-        .chart-container {
+        .timeline {
           display: flex;
-          justify-content: center;
-          margin-bottom: 16px;
+          margin: 8px 0;
+          height: 6px;
+          border-radius: 3px;
+          overflow: visible;
         }
         
-        #price-chart {
-          max-width: 100%;
-          height: auto;
+        .slot {
+          flex: 1;
+          opacity: 1;
+          position: relative;
         }
         
-        .price-stats {
-          display: flex;
-          justify-content: space-between;
-          gap: 16px;
+        .slot.faded {
+          opacity: 0.3;
         }
         
-        .stat-item {
+        .slot.marker::after {
+          content: '';
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 3px;
+          height: 14px;
+          background: inherit;
+          border: 2px solid var(--card-background-color, #fff);
+          border-radius: 10px;
+          box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .scale {
+          display: grid;
+          grid-template-columns: repeat(25, 1fr);
+          font-size: 12px;
+          color: var(--secondary-text-color, #666);
+          margin-top: 6px;
+        }
+        
+        .scale .tick {
           display: flex;
           flex-direction: column;
           align-items: center;
-          flex: 1;
-          padding: 8px;
-          background: var(--secondary-background-color, #f5f5f5);
-          border-radius: 8px;
         }
         
-        .stat-label {
-          font-size: 12px;
-          color: var(--secondary-text-color, #666);
+        .scale .dot {
+          width: 4px;
+          height: 4px;
+          border-radius: 50%;
+          background: var(--divider-color, #656c72);
           margin-bottom: 4px;
         }
         
-        .stat-value {
+        .scale .dot.faded {
+          opacity: 0.4;
+        }
+        
+        .scale .hour {
+          font-variant-numeric: tabular-nums;
+          text-align: center;
+        }
+        
+        .circle-container {
+          position: relative;
+          width: 150px;
+          height: 150px;
+          margin: 0 auto;
+        }
+        
+        .circle-chart {
+          width: 100%;
+          height: 100%;
+        }
+        
+        .circle-text {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          text-align: center;
+        }
+        
+        .circle-text .value {
+          font-size: 28px;
+          font-weight: bold;
+          color: var(--primary-text-color, #333);
+        }
+        
+        .circle-text .unit {
+          font-size: 16px;
+          margin-left: 4px;
+          color: var(--primary-text-color, #333);
+        }
+        
+        .circle-text .time {
           font-size: 14px;
-          font-weight: 600;
+          color: var(--secondary-text-color, #666);
         }
         
-        .min-price {
-          color: #4caf50;
+        .slider-container {
+          margin-top: 16px;
         }
         
-        .max-price {
-          color: #f44336;
+        .time-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 6px;
+          border-radius: 5px;
+          background: var(--primary-color, #03a9f4);
+          outline: none;
+          opacity: 0.9;
+        }
+        
+        .time-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: var(--accent-color, var(--primary-color));
+          cursor: pointer;
+        }
+        
+        .time-slider::-moz-range-thumb {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: var(--accent-color, var(--primary-color));
+          cursor: pointer;
+          border: none;
         }
         
         .error {
@@ -400,11 +517,6 @@ class DynamicPricesCard extends HTMLElement {
           gap: 8px;
           color: #f44336;
           padding: 16px;
-          text-align: center;
-        }
-        
-        .error ha-icon {
-          --mdc-icon-size: 24px;
         }
         
         @media (max-width: 600px) {
@@ -414,29 +526,142 @@ class DynamicPricesCard extends HTMLElement {
             gap: 8px;
           }
           
-          .info-row {
-            align-self: stretch;
-          }
-          
-          .price-stats {
-            flex-direction: column;
-            gap: 8px;
+          .circle-container {
+            width: 120px;
+            height: 120px;
           }
         }
       </style>
     `;
   }
+}
 
-  getCardSize() {
-    return 3;
+// Visual Editor
+class DynamicPricesCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = {
+      entity: '',
+      title: 'Dynamic Prices',
+      timeline: true,
+      slider: false,
+      theme: 'auto',
+      color_coding: true,
+      unit_in_cents: false,
+      hours: 24,
+      ...config
+    };
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._initialized) {
+      this._render();
+      this._initialized = true;
+    }
+  }
+
+  _render() {
+    if (!this._hass) return;
+
+    this.innerHTML = `
+      <div class="card-config">
+        <div class="option">
+          <ha-textfield
+            label="Entity (verplicht)"
+            .value="${this._config.entity}"
+            .configValue="${'entity'}"
+            @input="${this._valueChanged}"
+          ></ha-textfield>
+        </div>
+        
+        <div class="option">
+          <ha-textfield
+            label="Titel"
+            .value="${this._config.title}"
+            .configValue="${'title'}"
+            @input="${this._valueChanged}"
+          ></ha-textfield>
+        </div>
+        
+        <div class="option">
+          <ha-formfield label="Timeline weergave">
+            <ha-switch
+              .checked="${this._config.timeline}"
+              .configValue="${'timeline'}"
+              @change="${this._valueChanged}"
+            ></ha-switch>
+          </ha-formfield>
+        </div>
+        
+        <div class="option">
+          <ha-formfield label="Tijdslider (alleen cirkel modus)">
+            <ha-switch
+              .checked="${this._config.slider}"
+              .configValue="${'slider'}"
+              @change="${this._valueChanged}"
+            ></ha-switch>
+          </ha-formfield>
+        </div>
+        
+        <div class="option">
+          <ha-formfield label="Kleurcodering (boven/onder gemiddelde)">
+            <ha-switch
+              .checked="${this._config.color_coding}"
+              .configValue="${'color_coding'}"
+              @change="${this._valueChanged}"
+            ></ha-switch>
+          </ha-formfield>
+        </div>
+        
+        <div class="option">
+          <ha-formfield label="Toon prijzen in centen">
+            <ha-switch
+              .checked="${this._config.unit_in_cents}"
+              .configValue="${'unit_in_cents'}"
+              @change="${this._valueChanged}"
+            ></ha-switch>
+          </ha-formfield>
+        </div>
+      </div>
+      
+      <style>
+        .card-config {
+          padding: 16px;
+        }
+        .option {
+          margin-bottom: 16px;
+        }
+      </style>
+    `;
+  }
+
+  _valueChanged(ev) {
+    if (!this._config || !this._hass) return;
+    
+    const target = ev.target;
+    const configValue = target.configValue;
+    
+    if (configValue) {
+      const value = target.checked !== undefined ? target.checked : target.value;
+      this._config = { ...this._config, [configValue]: value };
+      
+      const event = new CustomEvent('config-changed', {
+        detail: { config: this._config },
+        bubbles: true,
+        composed: true
+      });
+      this.dispatchEvent(event);
+    }
   }
 }
 
 customElements.define('dynamic-prices-card', DynamicPricesCard);
+customElements.define('dynamic-prices-card-editor', DynamicPricesCardEditor);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'dynamic-prices-card',
   name: 'Dynamic Prices Card',
-  description: 'A card to display dynamic energy prices for the next 24 hours'
+  description: 'A card to display dynamic energy prices with timeline and circle views',
+  preview: false
 });

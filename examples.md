@@ -1,31 +1,42 @@
 # Voorbeeldconfiguraties voor Dynamic Prices Card
 
-## Basis configuratie
+## Timeline weergave (standaard)
 
 ```yaml
 type: custom:dynamic-prices-card
 entity: sensor.nordpool_kwh_nl_eur_3_095_0
 title: Energieprijzen vandaag
+timeline: true
+color_coding: true
 ```
 
-## Geavanceerde configuratie
+## Cirkel weergave basis
 
 ```yaml
 type: custom:dynamic-prices-card
 entity: sensor.nordpool_kwh_nl_eur_3_095_0
-title: Energieprijzen komende 24u
-hours: 24
-refresh_interval: 30
-show_current_price: true
-show_average: true
-price_unit: "€/kWh"
-chart_type: "area"
-color_scheme: "dynamic"
-height: 250
-animations: true
-show_grid: true
-show_legend: true
-theme: "auto"
+title: Huidige energieprijs
+timeline: false
+```
+
+## Cirkel weergave met tijdslider
+
+```yaml
+type: custom:dynamic-prices-card
+entity: sensor.nordpool_kwh_nl_eur_3_095_0
+title: Energieprijzen navigatie
+timeline: false
+slider: true
+```
+
+## Prijzen in centen weergave
+
+```yaml
+type: custom:dynamic-prices-card
+entity: sensor.nordpool_kwh_nl_eur_3_095_0
+title: Energieprijzen (centen)
+unit_in_cents: true
+timeline: true
 ```
 
 ## Configuratie voor verschillende leveranciers
