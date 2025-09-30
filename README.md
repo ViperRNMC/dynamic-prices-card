@@ -1,6 +1,7 @@
 # Dynamic Prices Card
 
 [![Version](https://img.shields.io/badge/version-2025.9.1-blue.svg)](https://github.com/ViperRNMC/dynamic-prices-card/releases)
+[![GitHub Issues](https://img.shields.io/github/issues/ViperRNMC/dynamic-prices-card)](https://github.com/ViperRNMC/dynamic-prices-card/issues)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
 A modern Home Assistant Lovelace card for displaying energy prices with dynamic layouts and intelligent highlighting. Inspired by the clean design of the [Uptime Card](https://github.com/dylandoamaral/uptime-card) and the timeline functionality of the [Price Timeline Card](https://github.com/Neisi/ha-price-timeline-card).
