@@ -2,8 +2,9 @@
 // Clean implementation based on uptime-card design + price-timeline functionality
 // https://github.com/ViperRNMC/dynamic-prices-card
 
-// Translation cache
+// Translation cache with size limit to prevent memory leaks
 let translationCache = {};
+const MAX_CACHE_SIZE = 10;
 
 // Load translations from external files
 const loadTranslation = async (lang) => {
@@ -24,6 +25,13 @@ const loadTranslation = async (lang) => {
       try {
         response = await fetch(`${basePath}translations/${lang}.json`);
         if (response.ok) {
+          // Cleanup cache if it gets too large
+          const cacheKeys = Object.keys(translationCache);
+          if (cacheKeys.length >= MAX_CACHE_SIZE) {
+            // Remove oldest entries (keep en and most recent)
+            const keysToRemove = cacheKeys.filter(k => k !== 'en').slice(0, -2);
+            keysToRemove.forEach(k => delete translationCache[k]);
+          }
           translationCache[lang] = await response.json();
           return translationCache[lang];
         }
@@ -223,6 +231,7 @@ class DynamicPricesCard extends HTMLElement {
       highlight_mode: 'cheapest', // 'cheapest' or 'expensive'
       max_highlights: 5,
       layout_style: 'bars', // 'bars' or 'timeline'
+      indicator_position: 'top', // 'top' or 'bottom'
       unit: 'Cent',
       unit_multiplier: 1, // For converting between €/kWh and cent/kWh
       color_theme: 'default',
@@ -399,60 +408,21 @@ class DynamicPricesCard extends HTMLElement {
     return priceWithIndex.slice(0, maxCount).map(item => item.index);
   }
 
-  findPeaksAndValleys(prices, findPeaks = false) {
-    if (prices.length < 3) return [];
-    
-    const results = [];
-    const priceValues = prices.map(p => parseFloat(p.price));
-    const minPrice = Math.min(...priceValues);
-    const maxPrice = Math.max(...priceValues);
-    const priceRange = maxPrice - minPrice;
-    const threshold = priceRange * 0.15; // 15% threshold for significance
-    
-    // Find local peaks or valleys
-    for (let i = 1; i < prices.length - 1; i++) {
-      const prev = priceValues[i - 1];
-      const current = priceValues[i];
-      const next = priceValues[i + 1];
-      
-      if (findPeaks) {
-        // Find peaks (local maxima)
-        if (current > prev && current > next && current - minPrice > threshold) {
-          results.push({ index: i, value: current, significance: current - minPrice });
-        }
-      } else {
-        // Find valleys (local minima)
-        if (current < prev && current < next && maxPrice - current > threshold) {
-          results.push({ index: i, value: current, significance: maxPrice - current });
-        }
-      }
-    }
-    
-    // Also consider global extremes
-    if (findPeaks) {
-      const globalMaxIndex = priceValues.indexOf(maxPrice);
-      if (!results.find(r => r.index === globalMaxIndex)) {
-        results.push({ index: globalMaxIndex, value: maxPrice, significance: maxPrice - minPrice });
-      }
-    } else {
-      const globalMinIndex = priceValues.indexOf(minPrice);
-      if (!results.find(r => r.index === globalMinIndex)) {
-        results.push({ index: globalMinIndex, value: minPrice, significance: maxPrice - minPrice });
-      }
-    }
-    
-    // Sort by significance and return indices
-    return results
-      .sort((a, b) => b.significance - a.significance)
-      .map(r => r.index);
-  }
+
 
   getTimeZones(prices) {
     if (!this._config.show_time_zones || prices.length === 0) return [];
     
     const zones = [];
-    const minPrice = Math.min(...prices.map(p => p.price));
-    const maxPrice = Math.max(...prices.map(p => p.price));
+    // Reuse existing price values if available, otherwise calculate
+    let minPrice, maxPrice;
+    if (prices.length > 0) {
+      const priceValues = prices.map(p => parseFloat(p.price));
+      minPrice = Math.min(...priceValues);
+      maxPrice = Math.max(...priceValues);
+    } else {
+      minPrice = maxPrice = 0;
+    }
     const priceRange = maxPrice - minPrice;
     
     // Get theme colors
@@ -517,96 +487,223 @@ class DynamicPricesCard extends HTMLElement {
     return zones;
   }
 
-  getIdealAvoidRanges(prices, idealIndices) {
+
+
+  renderPositionalRanges(prices, idealIndices) {
+    const bgColor = this._config.highlight_mode === 'expensive' ? '#f44336' : 'var(--primary-color)';
+    
+    // Find consecutive ideal time ranges
+    const ranges = this.getIdealTimeRanges(prices, idealIndices);
+    
+    // Calculate the width each time slot should have to match the bars
+    const barSpacing = this._config.bar_spacing || 2;
+    const singleBarWidth = `calc((100% - ${(prices.length - 1) * barSpacing}px) / ${prices.length})`;
+    
+    // Track which positions have been used for ranges
+    const usedPositions = new Set();
+    
+    // Create a grid based on price positions
+    return prices.map((price, index) => {
+      const isIdeal = idealIndices.includes(index);
+      const showLabel = index % Math.max(1, Math.floor(prices.length / 6)) === 0;
+      const hour = new Date(price.datetime).getHours();
+      
+      // Skip if this position is already used by a previous range
+      if (usedPositions.has(index)) {
+        return '';
+      }
+      
+      // Check if this hour is the start of a range
+      const range = ranges.find(r => r.startHour === hour);
+      
+      if (range) {
+        // Calculate how many bars this range spans
+        const rangeSpan = range.span;
+        
+        // Mark all positions in this range as used
+        for (let i = 0; i < rangeSpan; i++) {
+          usedPositions.add(index + i);
+        }
+        
+        // Calculate width more precisely to match bars with better alignment
+        const barWidth = `((100% - ${(prices.length - 1) * barSpacing}px) / ${prices.length})`;
+        const totalWidthForSpan = `calc(${rangeSpan} * ${barWidth} + ${Math.max(0, rangeSpan - 1) * barSpacing}px)`;
+        const marginRight = (index + rangeSpan - 1) < prices.length - 1 ? `${barSpacing}px` : '0px';
+        const marginLeft = index === 0 ? '0px' : '0px';
+        
+        const label = range.single ? `${range.startHour}` : `${range.startHour}-${range.endHour}`;
+        const fontSize = '10px'; // Consistent with time-label font size
+        const padding = label.length > 2 ? '2px 4px' : '2px 3px';
+        
+        // Dynamic alignment correction for bar layout
+        const entryCount = prices.length;
+        let alignmentOffset = '';
+        if (entryCount >= 24) {
+          alignmentOffset = 'transform: translateX(-2px);';
+        } else if (entryCount >= 22) {
+          alignmentOffset = 'transform: translateX(-1px);';
+        }
+        
+        return `<span class="time-range" style="width: ${totalWidthForSpan}; margin-right: ${marginRight}; flex-shrink: 0; background-color: ${bgColor}; color: white; padding: ${padding}; border-radius: 6px; display: flex; align-items: center; justify-content: center; box-sizing: border-box; font-size: ${fontSize}; font-weight: 600; position: relative; ${alignmentOffset}">${label}</span>`;
+      } else if (showLabel && !isIdeal) {
+        // Show regular hour labels only at intervals for non-ideal times
+        const baseStyle = `width: ${singleBarWidth}; margin-right: ${index < prices.length - 1 ? barSpacing : 0}px; flex-shrink: 0; display: flex; justify-content: center; align-items: center;`;
+        return `<span class="time-label" style="${baseStyle}">${String(hour).padStart(2, '0')}</span>`;
+      } else {
+        // Empty spacer
+        const baseStyle = `width: ${singleBarWidth}; margin-right: ${index < prices.length - 1 ? barSpacing : 0}px; flex-shrink: 0;`;
+        return `<span class="time-spacer" style="${baseStyle}"></span>`;
+      }
+    }).filter(item => item !== '').join('');
+  }
+
+  getIdealTimeRanges(prices, idealIndices) {
     if (idealIndices.length === 0) return [];
     
     const ranges = [];
-    idealIndices.sort((a, b) => a - b); // Sort indices
+    const sortedIndices = [...idealIndices].sort((a, b) => a - b);
     
-    let rangeStart = idealIndices[0];
-    let rangeEnd = idealIndices[0];
+    let rangeStart = sortedIndices[0];
+    let rangeEnd = sortedIndices[0];
     
-    for (let i = 1; i < idealIndices.length; i++) {
-      const currentIndex = idealIndices[i];
-      const prevIndex = idealIndices[i - 1];
+    for (let i = 1; i < sortedIndices.length; i++) {
+      const currentIndex = sortedIndices[i];
+      const prevIndex = sortedIndices[i - 1];
       
-      // Check if consecutive or close indices (within 2 hours)
-      if (currentIndex - prevIndex <= 2) {
+      // Check if truly consecutive indices (exactly 1 apart)
+      if (currentIndex - prevIndex === 1) {
         rangeEnd = currentIndex;
       } else {
         // End current range and start new one
-        ranges.push({
-          start: this.formatTime(prices[rangeStart].datetime),
-          end: this.formatTime(new Date(new Date(prices[rangeEnd].datetime).getTime() + 60 * 60 * 1000))
-        });
+        const startHour = new Date(prices[rangeStart].datetime).getHours();
+        const endHour = new Date(prices[rangeEnd].datetime).getHours();
+        
+        // Add range with start index for positioning
+        if (rangeStart === rangeEnd) {
+          ranges.push({ 
+            startHour, 
+            endHour: startHour, 
+            single: true, 
+            startIndex: rangeStart,
+            span: 1
+          });
+        } else {
+          ranges.push({ 
+            startHour, 
+            endHour,
+            startIndex: rangeStart,
+            span: rangeEnd - rangeStart + 1
+          });
+        }
+        
         rangeStart = currentIndex;
         rangeEnd = currentIndex;
       }
     }
     
     // Add the last range
-    ranges.push({
-      start: this.formatTime(prices[rangeStart].datetime),
-      end: this.formatTime(new Date(new Date(prices[rangeEnd].datetime).getTime() + 60 * 60 * 1000))
-    });
+    const startHour = new Date(prices[rangeStart].datetime).getHours();
+    const endHour = new Date(prices[rangeEnd].datetime).getHours();
+    
+    if (rangeStart === rangeEnd) {
+      ranges.push({ 
+        startHour, 
+        endHour: startHour, 
+        single: true, 
+        startIndex: rangeStart,
+        span: 1
+      });
+    } else {
+      ranges.push({ 
+        startHour, 
+        endHour,
+        startIndex: rangeStart,
+        span: rangeEnd - rangeStart + 1
+      });
+    }
     
     return ranges;
   }
 
-  renderPositionalRanges(prices, idealIndices) {
-    const ranges = this.getIdealAvoidRanges(prices, idealIndices);
-    const bgColor = this._config.highlight_mode === 'expensive' ? '#f44336' : 'var(--primary-color)';
-    
-    // Create a grid based on price positions
-    return prices.map((price, index) => {
-      // Check if this hour is part of any range
-      const rangeForThisHour = ranges.find(range => {
-        const priceHour = new Date(price.datetime).getHours();
-        const rangeStartHour = parseInt(range.start.split(':')[0]);
-        const rangeEndHour = parseInt(range.end.split(':')[0]);
-        return priceHour >= rangeStartHour && priceHour < rangeEndHour;
-      });
-      
-      if (rangeForThisHour && index % Math.max(1, Math.floor(prices.length / 6)) === 0) {
-        return `<span class="time-range" style="background-color: ${bgColor}; color: white; padding: 2px 4px; border-radius: 8px; font-size: 10px; font-weight: 600;">${rangeForThisHour.start}-${rangeForThisHour.end}</span>`;
-      } else if (index % Math.max(1, Math.floor(prices.length / 6)) === 0) {
-        return `<span class="time-label">${this.formatTime(price.datetime)}</span>`;
-      }
-      return '<span class="time-spacer"></span>';
-    }).join('');
-  }
-
   renderPositionalRangesTimeline(prices, idealIndices) {
-    const ranges = this.getIdealAvoidRanges(prices, idealIndices);
     const bgColor = this._config.highlight_mode === 'expensive' ? '#f44336' : 'var(--primary-color)';
+    const ranges = this.getIdealTimeRanges(prices, idealIndices);
+    const usedPositions = new Set();
     
-    return Array.from({ length: 25 }).map((_, i) => {
-      const hour = i % 24;
-      const showHour = i % 6 === 0 || i === 24;
+    // Create timeline ticks with proper spacing
+    const result = [];
+    
+    prices.forEach((price, index) => {
+      const hour = new Date(price.datetime).getHours();
+      const showHour = index % 6 === 0 || index === prices.length - 1;
+      const isIdeal = idealIndices.includes(index);
       
-      // Check if this hour is part of any range
-      const rangeForThisHour = ranges.find(range => {
-        const rangeStartHour = parseInt(range.start.split(':')[0]);
-        const rangeEndHour = parseInt(range.end.split(':')[0]);
-        return hour >= rangeStartHour && hour < rangeEndHour;
-      });
-      
-      if (rangeForThisHour && showHour) {
-        return `
-          <div class="pt-tick">
-            <div class="pt-range" style="background-color: ${bgColor}; color: white; padding: 2px 4px; border-radius: 6px; font-size: 9px; font-weight: 600;">${rangeForThisHour.start}-${rangeForThisHour.end}</div>
-          </div>
-        `;
-      } else if (showHour) {
-        return `
-          <div class="pt-tick">
-            <div class="pt-dot"></div>
-            <div class="pt-hour">${String(hour).padStart(2, '0')}</div>
-          </div>
-        `;
+      // Skip if already used by a range
+      if (usedPositions.has(index)) {
+        return;
       }
-      return `<div class="pt-tick"><div class="pt-dot pt-faded"></div></div>`;
-    }).join('');
+      
+      // Check if this hour is the start of a range
+      const range = ranges.find(r => r.startIndex === index);
+      
+      if (range) {
+        // Mark positions as used
+        for (let i = 0; i < range.span; i++) {
+          usedPositions.add(index + i);
+        }
+        
+        // Calculate width for the range span with better precision
+        const spanWidth = `calc(${range.span} * (100% / ${prices.length}))`;
+        
+        const label = range.single ? range.startHour : range.startHour + '-' + range.endHour;
+        const padding = label.toString().length > 2 ? '2px 4px' : '2px 3px';
+        
+        // Dynamic alignment correction based on entry count
+        const entryCount = prices.length;
+        let chipWidth, chipMargin;
+        if (entryCount >= 24) {
+          chipWidth = 'calc(100% - 6px)';
+          chipMargin = '0 3px';
+        } else if (entryCount >= 22) {
+          chipWidth = 'calc(100% - 4px)';
+          chipMargin = '0 2px';
+        } else {
+          chipWidth = 'calc(100% - 2px)';
+          chipMargin = '0 1px';
+        }
+        
+        result.push(`
+          <div class="pt-tick" style="flex: ${range.span}; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-width: 0; box-sizing: border-box; position: relative;">
+              <div class="pt-dot" style="opacity: 0; margin-bottom: 4px;"></div>
+              <div class="pt-range" style="background-color: ${bgColor}; color: white; padding: ${padding}; border-radius: 6px; font-size: 11px; font-weight: 600; text-align: center; white-space: nowrap; width: ${chipWidth}; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; display: flex; align-items: center; justify-content: center; margin: ${chipMargin};">${label}</div>
+          </div>
+        `);
+      } else {
+        const flexValue = 1;
+        
+        if (showHour && !isIdeal) {
+          // Show regular hour labels
+          result.push(`
+            <div class="pt-tick" style="flex: ${flexValue}; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-width: 0; box-sizing: border-box;">
+              <div class="pt-dot"></div>
+              <div class="pt-hour" style="margin-top: 4px;">${String(hour).padStart(2, '0')}</div>
+            </div>
+          `);
+        } else if (isIdeal) {
+          // Show highlighted dot
+          result.push(`
+            <div class="pt-tick" style="flex: ${flexValue}; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-width: 0; box-sizing: border-box;">
+              <div class="pt-dot ${this._config.highlight_mode === 'expensive' ? 'pt-dot-avoid' : 'pt-dot-ideal'}"></div>
+            </div>
+          `);
+        } else {
+          // Empty space
+          result.push(`<div class="pt-tick" style="flex: ${flexValue}; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-width: 0; box-sizing: border-box;"><div class="pt-dot pt-faded"></div></div>`);
+        }
+      }
+    });
+    
+    return result.join('');
   }
 
   getColorForPrice(price, minPrice, maxPrice, index) {
@@ -654,16 +751,15 @@ class DynamicPricesCard extends HTMLElement {
     const currentIndex = this.getCurrentPriceIndex(prices);
     const currentPrice = currentIndex >= 0 ? prices[currentIndex] : null;
     const idealIndices = this.getIdealTimeIndices(prices, this._config.max_highlights || 5);
-    const timeZones = this.getTimeZones(prices);
     
-    // Calculate min/max for normalization
+    // Calculate min/max for normalization - reuse array for efficiency
     const priceValues = prices.map(p => parseFloat(p.price));
     const minPrice = Math.min(...priceValues);
     const maxPrice = Math.max(...priceValues);
 
     // Timeline layout styling
     if (this._config.layout_style === 'timeline') {
-      this.renderTimelineStyle(prices, average, currentIndex, currentPrice, idealIndices, timeZones, minPrice, maxPrice);
+      this.renderTimelineStyle(prices, average, currentIndex, currentPrice, idealIndices, minPrice, maxPrice);
       return;
     }
 
@@ -671,11 +767,19 @@ class DynamicPricesCard extends HTMLElement {
       <ha-card>
         <div class="header">
           <div class="title">${this._config.title}</div>
-          ${this._config.show_current && currentPrice ? `
-            <div class="status">
-              <span class="current-price">${this.formatPrice(currentPrice.price)} ${this._config.unit}</span>
+          ${this._config.show_ideal_avoid && idealIndices.length > 0 && this._config.indicator_position === 'top' ? `
+            <div class="ideal-indicator header-indicator-center">
+              <span class="${this._config.highlight_mode === 'expensive' ? 'avoid-dot' : 'ideal-dot'}"></span>
+              <span class="ideal-text">${this._config.highlight_mode === 'expensive' ? localizeSync('avoid_time', this._lang, 'card') : localizeSync('ideal_time', this._lang, 'card')}</span>
             </div>
           ` : ''}
+          <div class="header-right">
+            ${this._config.show_current && currentPrice ? `
+              <div class="status">
+                <span class="current-price">${this.formatPrice(currentPrice.price)} ${this._config.unit}</span>
+              </div>
+            ` : ''}
+          </div>
         </div>
         
         <div class="timeline-container">
@@ -694,7 +798,7 @@ class DynamicPricesCard extends HTMLElement {
               const tooltipContent = this._config.tooltip_enabled ? 
                 `data-tooltip="${this.formatTime(price.datetime)}: ${this.formatPrice(value)} ${this._config.unit}"` : '';
               
-              const idealClass = isIdeal ? (this._config.highlight_mode === 'expensive' ? 'avoid' : 'ideal') : '';
+              const idealClass = isIdeal ? (this._config.highlight_mode === 'expensive' ? 'avoid-bar' : 'ideal-bar') : '';
               const pastClass = isPast ? 'past' : '';
               
               return `
@@ -715,10 +819,15 @@ class DynamicPricesCard extends HTMLElement {
               ${this._config.show_time_zones && this._config.show_ideal_avoid && idealIndices.length > 0 ? 
                 this.renderPositionalRanges(prices, idealIndices) :
                 prices.map((price, index) => {
+                  const barSpacing = this._config.bar_spacing || 2;
+                  const barWidth = `calc((100% - ${(prices.length - 1) * barSpacing}px) / ${prices.length})`;
+                  const marginRight = index < prices.length - 1 ? `${barSpacing}px` : '0px';
+                  
                   if (index % Math.max(1, Math.floor(prices.length / 6)) === 0) {
-                    return `<span class="time-label">${this.formatTime(price.datetime)}</span>`;
+                    const hour = new Date(price.datetime).getHours();
+                    return `<span class="time-label" style="width: ${barWidth}; margin-right: ${marginRight}; display: flex; justify-content: center; align-items: center; flex-shrink: 0;">${String(hour).padStart(2, '0')}</span>`;
                   }
-                  return '<span class="time-spacer"></span>';
+                  return `<span class="time-spacer" style="width: ${barWidth}; margin-right: ${marginRight}; flex-shrink: 0;"></span>`;
                 }).join('')
               }
             </div>
@@ -731,9 +840,9 @@ class DynamicPricesCard extends HTMLElement {
           ${this._config.show_average ? `
             <span>${localizeSync('avg', this._lang, 'card')}: ${this.formatPrice(average)} ${this._config.unit}</span>
           ` : ''}
-          ${this._config.show_ideal_avoid && idealIndices.length > 0 ? `
+          ${this._config.show_ideal_avoid && idealIndices.length > 0 && this._config.indicator_position === 'bottom' ? `
             <span class="ideal-indicator">
-              <span class="ideal-dot ${this._config.highlight_mode === 'expensive' ? 'avoid' : 'ideal'}"></span>
+              <span class="${this._config.highlight_mode === 'expensive' ? 'avoid-dot' : 'ideal-dot'}"></span>
               ${this._config.highlight_mode === 'expensive' ? localizeSync('avoid_time', this._lang, 'card') : localizeSync('ideal_time', this._lang, 'card')}
             </span>
           ` : ''}
@@ -746,16 +855,11 @@ class DynamicPricesCard extends HTMLElement {
     `;
   }
 
-  renderTimelineStyle(prices, average, currentIndex, currentPrice, idealIndices, timeZones, minPrice, maxPrice) {
+  renderTimelineStyle(prices, average, currentIndex, currentPrice, idealIndices, minPrice, maxPrice) {
     const now = new Date();
     const currentHour = now.getHours();
     const minutes = now.getMinutes();
     const hourProgress = minutes / 60;
-    
-    // Price timeline specific time label
-    const timeLabel = currentPrice ? 
-      `${this.formatTime(currentPrice.datetime)}-${this.formatTime(new Date(new Date(currentPrice.datetime).getTime() + 60 * 60 * 1000))}` : 
-      '';
 
     this.shadowRoot.innerHTML = `
       <ha-card class="timeline-card">
@@ -768,9 +872,17 @@ class DynamicPricesCard extends HTMLElement {
               </div>
             ` : ''}
           </div>
-          ${this._config.show_current ? `
-            <div class="pt-label">${this._config.title}</div>
+          ${this._config.show_ideal_avoid && idealIndices.length > 0 && this._config.indicator_position === 'top' ? `
+            <div class="ideal-indicator pt-header-indicator-center">
+              <div class="pt-indicator-dot ${this._config.highlight_mode === 'expensive' ? 'pt-indicator-avoid' : 'pt-indicator-ideal'}"></div>
+              <span class="ideal-text">${this._config.highlight_mode === 'expensive' ? localizeSync('avoid_time', this._lang, 'card') : localizeSync('ideal_time', this._lang, 'card')}</span>
+            </div>
           ` : ''}
+          <div class="pt-header-right">
+            ${this._config.show_current ? `
+              <div class="pt-label">${this._config.title}</div>
+            ` : ''}
+          </div>
         </div>
 
         <div class="pt-timeline">
@@ -829,18 +941,19 @@ class DynamicPricesCard extends HTMLElement {
           <div class="pt-scale">
             ${this._config.show_time_zones && this._config.show_ideal_avoid && idealIndices.length > 0 ? 
               this.renderPositionalRangesTimeline(prices, idealIndices) :
-              Array.from({ length: 25 }).map((_, i) => {
-                const showHour = i % 6 === 0 || i === 24;
-                const hourIndex = Math.floor(i * prices.length / 24);
-                const isIdealHour = hourIndex < prices.length && idealIndices.includes(hourIndex);
-                const dotClass = isIdealHour ? 
+              prices.map((price, index) => {
+                const hour = new Date(price.datetime).getHours();
+                const showHour = index % 6 === 0 || index === prices.length - 1;
+                const isIdeal = idealIndices.includes(index);
+                
+                const dotClass = isIdeal ? 
                   (this._config.highlight_mode === 'expensive' ? 'pt-dot-avoid' : 'pt-dot-ideal') : 
                   (showHour ? '' : 'pt-faded');
                 
                 return `
-                  <div class="pt-tick">
+                  <div class="pt-tick" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-width: 0;">
                     <div class="pt-dot ${dotClass}"></div>
-                    ${showHour ? `<div class="pt-hour">${String(i % 24).padStart(2, '0')}</div>` : ''}
+                    ${showHour ? `<div class="pt-hour">${String(hour).padStart(2, '0')}</div>` : ''}
                   </div>
                 `;
               }).join('')
@@ -850,14 +963,14 @@ class DynamicPricesCard extends HTMLElement {
 
 
 
-        ${this._config.show_average || (this._config.show_ideal_avoid && idealIndices.length > 0) || this._config.show_entries ? `
+        ${this._config.show_average || (this._config.show_ideal_avoid && idealIndices.length > 0 && this._config.indicator_position === 'bottom') || this._config.show_entries ? `
           <div class="pt-footer">
             ${this._config.show_average ? `
               <span>${localizeSync('avg', this._lang, 'card')}: ${this.formatPrice(average)} ${this._config.unit}</span>
             ` : ''}
-            ${this._config.show_ideal_avoid && idealIndices.length > 0 ? `
+            ${this._config.show_ideal_avoid && idealIndices.length > 0 && this._config.indicator_position === 'bottom' ? `
               <span class="ideal-indicator">
-                <span class="ideal-dot ${this._config.highlight_mode === 'expensive' ? 'avoid' : 'ideal'}"></span>
+                <div class="pt-indicator-dot ${this._config.highlight_mode === 'expensive' ? 'pt-indicator-avoid' : 'pt-indicator-ideal'}"></div>
                 ${this._config.highlight_mode === 'expensive' ? localizeSync('avoid_time', this._lang, 'card') : localizeSync('ideal_time', this._lang, 'card')}
               </span>
             ` : ''}
@@ -950,7 +1063,8 @@ class DynamicPricesCard extends HTMLElement {
                 number: {
                   min: 1,
                   max: 48,
-                  mode: 'box'
+                  step: 1,
+                  mode: 'slider'
                 }
               }
             },
@@ -1063,6 +1177,20 @@ class DynamicPricesCard extends HTMLElement {
                   mode: 'box'
                 }
               }
+            },
+            {
+              name: 'indicator_position',
+              label: 'Indicator position',
+              default: 'top',
+              selector: {
+                select: {
+                  options: [
+                    { value: 'top', label: 'Top (Header)' },
+                    { value: 'bottom', label: 'Bottom (Footer)' }
+                  ],
+                  mode: 'dropdown'
+                }
+              }
             }
           ]
         },
@@ -1141,6 +1269,8 @@ class DynamicPricesCard extends HTMLElement {
       <style>
         :host {
           display: block;
+          width: 100%;
+          height: 100%;
           --color-ok: #45C669;
           --color-ko: #C66445;
           --color-half: #C6B145;
@@ -1158,6 +1288,11 @@ class DynamicPricesCard extends HTMLElement {
           box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.1));
           font-family: var(--paper-font-common-base_-_font-family, sans-serif);
           position: relative;
+          width: 100%;
+          height: 100%;
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
         }
         
         .header {
@@ -1165,12 +1300,20 @@ class DynamicPricesCard extends HTMLElement {
           justify-content: space-between;
           align-items: center;
           margin-bottom: 12px;
+          position: relative;
         }
         
         .title {
           font-size: 16px;
           font-weight: 500;
           color: var(--primary-text-color);
+        }
+        
+        .header-right {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 4px;
         }
         
         .status {
@@ -1188,6 +1331,10 @@ class DynamicPricesCard extends HTMLElement {
         .timeline-container {
           margin: 12px 0;
           position: relative;
+          flex: 1;
+          min-height: 0;
+          display: flex;
+          flex-direction: column;
         }
         
         .timeline {
@@ -1230,12 +1377,12 @@ class DynamicPricesCard extends HTMLElement {
           position: relative;
         }
         
-        .bar.ideal {
+        .bar.ideal-bar {
           border: 2px solid var(--primary-color);
           box-shadow: 0 0 6px rgba(var(--rgb-primary-color), 0.4);
         }
         
-        .bar.avoid {
+        .bar.avoid-bar {
           border: 2px solid #f44336;
           box-shadow: 0 0 6px rgba(244, 67, 54, 0.4);
         }
@@ -1277,11 +1424,11 @@ class DynamicPricesCard extends HTMLElement {
         
         .time-axis {
           display: flex;
-          justify-content: space-between;
-          margin-top: 4px;
-          padding: 0 2px;
-          flex-wrap: wrap;
-          gap: 4px;
+          width: 100%;
+          margin-top: 8px;
+          padding: 0;
+          align-items: center;
+          position: relative;
         }
 
         .zone-range {
@@ -1291,10 +1438,22 @@ class DynamicPricesCard extends HTMLElement {
         .time-label {
           font-size: 10px;
           color: var(--secondary-text-color);
+          text-align: center;
+          box-sizing: border-box;
         }
         
         .time-spacer {
-          flex: 1;
+          box-sizing: border-box;
+        }
+        
+        .time-range {
+          font-size: 10px;
+          font-weight: 600;
+          text-align: center;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          white-space: nowrap;
         }
         
         .footer {
@@ -1316,6 +1475,24 @@ class DynamicPricesCard extends HTMLElement {
           gap: 4px;
         }
         
+        .header-indicator {
+          font-size: 11px;
+          color: var(--secondary-text-color);
+        }
+        
+        .header-indicator-center {
+          font-size: 11px;
+          color: var(--secondary-text-color);
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+        }
+        
+        .ideal-text {
+          font-size: inherit;
+        }
+        
         .ideal-dot {
           width: 8px;
           height: 8px;
@@ -1324,9 +1501,12 @@ class DynamicPricesCard extends HTMLElement {
           background: transparent;
         }
         
-        .ideal-dot.avoid {
-          border-color: #f44336;
-          background: #f44336;
+        .avoid-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          border: 2px solid #f44336;
+          background: transparent;
         }
         
         .time-zones {
@@ -1363,29 +1543,59 @@ class DynamicPricesCard extends HTMLElement {
           padding: 20px;
         }
         
-        @media (max-width: 600px) {
+        /* Responsive breakpoints for different card sizes */
+        @media (max-width: 600px), (max-height: 200px) {
           ha-card {
-            padding: 12px;
+            padding: 8px;
           }
           
           .header {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 8px;
+            margin-bottom: 8px;
+          }
+          
+          .title {
+            font-size: 14px;
+          }
+          
+          .current-price {
+            font-size: 11px;
           }
           
           .timeline {
-            height: ${Math.max(20, (this._config?.bar_height || 30) * 0.7)}px;
+            height: ${Math.max(15, (this._config?.bar_height || 30) * 0.6)}px;
           }
           
           .footer {
-            flex-direction: column;
-            align-items: flex-start;
+            font-size: 11px;
+            margin-top: 6px;
+            padding-top: 6px;
           }
           
           .bar[data-tooltip]:hover::before {
-            font-size: 10px;
-            padding: 4px 6px;
+            font-size: 9px;
+            padding: 3px 5px;
+          }
+        }
+        
+        /* Very compact mode for small cards */
+        @container (max-width: 300px) {
+          .header .status {
+            display: none;
+          }
+          
+          .footer > span:nth-child(n+2) {
+            display: none;
+          }
+        }
+        
+        /* Container queries for responsive design */
+        @container (max-height: 150px) {
+          .footer {
+            display: none;
+          }
+          
+          .timeline-container {
+            margin: 8px 0;
           }
         }
       </style>
@@ -1401,6 +1611,11 @@ class DynamicPricesCard extends HTMLElement {
           font-family: var(--paper-font-common-base_-_font-family, sans-serif);
           color: var(--primary-text-color);
           text-align: center;
+          width: 100%;
+          height: 100%;
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
         }
 
         .pt-header {
@@ -1408,6 +1623,7 @@ class DynamicPricesCard extends HTMLElement {
           justify-content: space-between;
           align-items: flex-start;
           margin-bottom: 8px;
+          position: relative;
         }
 
         .pt-header-left {
@@ -1415,6 +1631,55 @@ class DynamicPricesCard extends HTMLElement {
           flex-direction: column;
           align-items: flex-start;
           gap: 0;
+        }
+        
+        .pt-header-right {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 4px;
+        }
+        
+        .pt-header-indicator {
+          font-size: 11px;
+          color: var(--secondary-text-color);
+        }
+        
+        .pt-header-indicator-center {
+          font-size: 11px;
+          color: var(--secondary-text-color);
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+          white-space: nowrap;
+          min-width: 120px;
+          width: 120px;
+          text-align: center;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
+        }
+        
+        .pt-indicator-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          margin-right: 4px;
+          flex-shrink: 0;
+        }
+        
+        .pt-indicator-ideal {
+          background: var(--primary-color);
+          border: 2px solid transparent;
+          box-shadow: 0 0 4px rgba(var(--rgb-primary-color), 0.6);
+        }
+        
+        .pt-indicator-avoid {
+          background: transparent;
+          border: 2px solid #f44336;
+          box-shadow: 0 0 4px rgba(244, 67, 54, 0.6);
         }
 
         .pt-time {
@@ -1459,12 +1724,16 @@ class DynamicPricesCard extends HTMLElement {
           border-radius: 5px;
           overflow: visible;
           position: relative;
+          flex: 1;
+          min-width: 0;
+          width: 100%;
         }
 
         .pt-slot {
           flex: 1;
           opacity: 1;
           position: relative;
+          min-width: 0;
         }
 
         .pt-slot.pt-marker::after {
@@ -1534,20 +1803,29 @@ class DynamicPricesCard extends HTMLElement {
         }
 
         .pt-scale {
-          display: grid;
-          grid-template-columns: repeat(25, 1fr);
+          display: flex;
           font-size: 12px;
           color: var(--secondary-text-color);
           margin-top: 6px;
-          width: calc(100% + (100% / 24));
-          margin-left: calc(-0.5 * (100% / 24));
-          margin-right: calc(-0.5 * (100% / 24));
+          width: 100%;
+          position: relative;
+          align-items: flex-start;
+          gap: 0;
+          min-height: 24px;
+          padding-top: 2px;
         }
 
         .pt-tick {
           display: flex;
           flex-direction: column;
           align-items: center;
+          justify-content: flex-start;
+          flex: 1;
+          min-width: 0;
+          max-width: none;
+          box-sizing: border-box;
+          position: relative;
+          height: 100%;
         }
 
         .pt-dot {
@@ -1570,11 +1848,27 @@ class DynamicPricesCard extends HTMLElement {
         .pt-dot.pt-dot-avoid {
           background: #f44336;
           box-shadow: 0 0 4px rgba(244, 67, 54, 0.6);
+          width: 4px;
+          height: 4px;
         }
 
         .pt-hour {
           font-variant-numeric: tabular-nums;
           text-align: center;
+          font-size: 11px;
+          line-height: 1.2;
+          margin-top: 0;
+        }
+        
+        .pt-range {
+          font-variant-numeric: tabular-nums;
+          line-height: 1.2;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 18px;
+          flex-shrink: 0;
+          position: relative;
         }
 
         .pt-zone-tick {
