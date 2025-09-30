@@ -6,7 +6,7 @@
   "codeowners": [
     "@ViperRNMC"
   ],
-  "content_in_root": true,
-  "filename": "dynamic-prices-card.js",
+  "content_in_root": false,
+  "filename": "dist/dynamic-prices-card.js",
   "render_readme": true
 }

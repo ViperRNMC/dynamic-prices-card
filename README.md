@@ -164,7 +164,7 @@ The card works with energy price sensors that provide data in the following form
 }
 ```
 
-### Compatible Integrations
+## Compatible Integrations
 - [Frank Energie](https://github.com/klaasnicolaas/python-frank-energie)
 - [Nordpool](https://github.com/custom-components/nordpool)
 - [ENTSO-E](https://github.com/JaccoR/hass-entso-e)
@@ -172,7 +172,6 @@ The card works with energy price sensors that provide data in the following form
 - [EnergyZero](https://github.com/klaasnicolaas/python-energyzero)
 - Any integration providing hourly price data
 
-```
 
 ## 🌍 Supported Languages
 
