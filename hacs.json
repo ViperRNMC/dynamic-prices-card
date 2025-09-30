@@ -1,0 +1,10 @@
+{
+  "name": "Dynamic Prices Card",
+  "description": "A Home Assistant card to display dynamic energy prices for the next 24 hours",
+  "url": "https://github.com/ViperRNMC/dynamic-prices-card",
+  "codeowners": [
+    "@ViperRNMC"
+  ],
+  "content_in_root": true,
+  "filename": "dynamic-prices-card.js"
+}
