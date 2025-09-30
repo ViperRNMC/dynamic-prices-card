@@ -996,7 +996,7 @@ class DynamicPricesCard extends HTMLElement {
   static getStubConfig() {
     return {
       type: 'custom:dynamic-prices-card',
-      entity: 'sensor.frank_energie_prijzen_huidige_elektricitetsprijs_all_in',
+      entity: 'sensor.energy_prices',
       title: 'Energy Prices',
       hours_to_show: 24
     };
