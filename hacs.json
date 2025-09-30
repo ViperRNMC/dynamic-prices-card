@@ -1,6 +1,6 @@
 {
   "name": "Dynamic Prices Card",
-  "version": "2025.10.1",
+  "version": "2025.9.1",
   "description": "Modern Home Assistant card for energy prices with dual layouts, smart highlighting, and multi-language support",
   "url": "https://github.com/ViperRNMC/dynamic-prices-card",
   "codeowners": [

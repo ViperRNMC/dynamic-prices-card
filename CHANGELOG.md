@@ -7,7 +7,7 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
 
 ## [Unreleased]
 
-## [2025.10.1] - 2025-09-30
+## [2025.9.1] - 2025-09-30
 
 ### Added
 - Dual layout system: Bars layout en Timeline layout
