@@ -7,32 +7,28 @@ en dit project volgt [Semantic Versioning](https://semver.org/lang/nl/).
 
 ## [Unreleased]
 
-## [1.0.0] - 2024-09-30
+## [2025.10.1] - 2025-09-30
 
 ### Added
-- Eerste release van Dynamic Prices Card
-- Grafische weergave van energieprijzen voor komende 24 uur
-- Ondersteuning voor verschillende chart types (line, area, bar)
-- Aanpasbare kleurenschema's (dynamic, green, blue, red)
-- Responsive design voor mobiele apparaten
-- Huidige tijd indicator in de grafiek
-- Min/max prijs statistieken
-- Gemiddelde prijs berekening
-- Configureerbare refresh interval
-- Dark/light theme ondersteuning
-- Grid lines voor betere leesbaarheid
-- HACS integratie
-- Uitgebreide configuratie opties
-- Foutafhandeling en validatie
-- Ondersteuning voor verschillende energieleveranciers
-- Nederlandse lokalisatie
+- Dual layout system: Bars layout en Timeline layout
+- Smart price highlighting met dynamic peak/valley detection
+- Multi-language support (EN/NL/DE/FR) met externe translation files
+- Rich color themes (6 verschillende thema's)
+- Flexible configuration met expandable sections en live preview
+- Layout en color theme separation
+- Configureerbare highlight count (1-12 perioden)
+- Tooltip support met price details
+- Comprehensive localization systeem
 
-### Features
-- 📊 Realtime prijsgrafiek met canvas rendering
-- 🎨 Meerdere kleurenschema's en themes
-- 📱 Volledig responsive ontwerp
-- ⚡ Efficiënte updates en rendering
-- 🌟 Ondersteuning voor Nordpool, Tibber, ENTSO-E
-- 💰 Automatische min/max prijs detectie
-- ⏰ Huidige tijd indicator
-- 🔧 Uitgebreide configuratie mogelijkheden
+### Changed
+- Renamed ideal_time_mode naar highlight_mode voor meer logische naming
+- Renamed ideal_time_count naar max_highlights
+- Separated layout style van color themes
+- Removed tomorrow functionality (show_tomorrow en tomorrow_entity)
+- Updated configuration form met betere labels en sectie-indeling
+- Complete herstructurering van de codebase
+
+### Removed
+- Tomorrow entity support (vereenvoudiging)
+- Separate timeline/compact/dynamic modes (geconsolideerd naar bars/timeline)
+- Development files niet nodig voor HACS distributie
